@@ -48,8 +48,7 @@ class AsyncRequest(object):
         if self.session is None:
             self.session = Session()
 
-        callback = kwargs.pop('callback', None)
-        if callback:
+        if callback := kwargs.pop('callback', None):
             kwargs['hooks'] = {'response': callback}
 
         #: The rest arguments for ``Session.request``

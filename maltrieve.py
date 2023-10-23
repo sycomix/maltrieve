@@ -46,11 +46,21 @@ class config(object):
         self.configp = ConfigParser.ConfigParser()
         self.configp.read(filename)
 
-        if args.logfile or self.configp.get('Maltrieve', 'logfile'):
-            if args.logfile:
-                self.logfile = args.logfile
-            else:
-                self.logfile = self.configp.get('Maltrieve', 'logfile')
+        if args.logfile:
+            self.logfile = (
+                args.logfile
+                if args.logfile
+                else self.configp.get('Maltrieve', 'logfile')
+            )
+            logging.basicConfig(filename=self.logfile, level=logging.DEBUG,
+                                format='%(asctime)s %(thread)d %(message)s',
+                                datefmt='%Y-%m-%d %H:%M:%S')
+        elif self.configp.get('Maltrieve', 'logfile'):
+            self.logfile = (
+                args.logfile
+                if args.logfile
+                else self.configp.get('Maltrieve', 'logfile')
+            )
             logging.basicConfig(filename=self.logfile, level=logging.DEBUG,
                                 format='%(asctime)s %(thread)d %(message)s',
                                 datefmt='%Y-%m-%d %H:%M:%S')
@@ -83,11 +93,7 @@ class config(object):
         else:
             self.white_list = False
 
-        if args.inputfile:
-            self.inputfile = args.inputfile
-        else:
-            self.inputfile = None
-
+        self.inputfile = args.inputfile if args.inputfile else None
         # make sure we can open the directory for writing
         if args.dumpdir:
             self.dumpdir = args.dumpdir
@@ -139,113 +145,113 @@ class config(object):
 
 
 def upload_crits(response, md5, cfg):
-    if response:
-        url_tag = urlparse(response.url)
-        mime_type = magic.from_buffer(response.content, mime=True)
-        files = {'filedata': (md5, response.content)}
-        headers = {'User-agent': 'Maltrieve'}
-        zip_files = ['application/zip', 'application/gzip', 'application/x-7z-compressed']
-        rar_files = ['application/x-rar-compressed']
-        inserted_domain = False
-        inserted_sample = False
+    if not response:
+        return
+    url_tag = urlparse(response.url)
+    mime_type = magic.from_buffer(response.content, mime=True)
+    files = {'filedata': (md5, response.content)}
+    headers = {'User-agent': 'Maltrieve'}
+    zip_files = ['application/zip', 'application/gzip', 'application/x-7z-compressed']
+    rar_files = ['application/x-rar-compressed']
+    inserted_domain = False
+    inserted_sample = False
 
-        # submit domain / IP
-        # TODO: identify if it is a domain or IP and submit accordingly
-        url = "{srv}/api/v1/domains/".format(srv=cfg.crits)
-        domain_data = {
-            'api_key': cfg.crits_key,
-            'username': cfg.crits_user,
-            'source': cfg.crits_source,
-            'domain': url_tag.netloc
-        }
-        try:
-            # Note that this request does NOT go through proxies
-            logging.debug("Domain submission: %s|%r", url, domain_data)
-            domain_response = requests.post(url, headers=headers, data=domain_data, verify=False)
-            # pylint says "Instance of LookupDict has no 'ok' member" but it's wrong, I checked
-            if domain_response.status_code == requests.codes.ok:
-                domain_response_data = domain_response.json()
-                if domain_response_data['return_code'] == 0:
-                    inserted_domain = True
-                else:
-                    logging.info("Submitted domain info %s for %s to CRITs, response was %s",
-                                 domain_data['domain'], md5, domain_response_data)
+    # submit domain / IP
+    # TODO: identify if it is a domain or IP and submit accordingly
+    url = "{srv}/api/v1/domains/".format(srv=cfg.crits)
+    domain_data = {
+        'api_key': cfg.crits_key,
+        'username': cfg.crits_user,
+        'source': cfg.crits_source,
+        'domain': url_tag.netloc
+    }
+    try:
+        # Note that this request does NOT go through proxies
+        logging.debug("Domain submission: %s|%r", url, domain_data)
+        domain_response = requests.post(url, headers=headers, data=domain_data, verify=False)
+        # pylint says "Instance of LookupDict has no 'ok' member" but it's wrong, I checked
+        if domain_response.status_code == requests.codes.ok:
+            domain_response_data = domain_response.json()
+            if domain_response_data['return_code'] == 0:
+                inserted_domain = True
             else:
-                logging.info("Submission of %s failed: %d", url, domain_response.status_code)
-        except requests.exceptions.ConnectionError:
-            logging.info("Could not connect to CRITs when submitting domain %s", domain_data['domain'])
-        except requests.exceptions.HTTPError:
-            logging.info("HTTP error when submitting domain %s to CRITs", domain_data['domain'])
-
-        # Submit sample
-        url = "{srv}/api/v1/samples/".format(srv=cfg.crits)
-        if mime_type in zip_files:
-            file_type = 'zip'
-        elif mime_type in rar_files:
-            file_type = 'rar'
+                logging.info("Submitted domain info %s for %s to CRITs, response was %s",
+                             domain_data['domain'], md5, domain_response_data)
         else:
-            file_type = 'raw'
-        sample_data = {
-            'api_key': cfg.crits_key,
-            'username': cfg.crits_user,
-            'source': cfg.crits_source,
-            'upload_type': 'file',
-            'md5': md5,
-            'file_format': file_type  # must be type zip, rar, or raw
-        }
-        try:
-            # Note that this request does NOT go through proxies
-            sample_response = requests.post(url, headers=headers, files=files, data=sample_data, verify=False)
-            # pylint says "Instance of LookupDict has no 'ok' member" but it's wrong, I checked
-            if sample_response.status_code == requests.codes.ok:
-                sample_response_data = sample_response.json()
-                if sample_response_data['return_code'] == 0:
-                    inserted_sample = True
-                else:
-                    logging.info("Submitted sample %s to CRITs, response was %r", md5, sample_response_data)
+            logging.info("Submission of %s failed: %d", url, domain_response.status_code)
+    except requests.exceptions.ConnectionError:
+        logging.info("Could not connect to CRITs when submitting domain %s", domain_data['domain'])
+    except requests.exceptions.HTTPError:
+        logging.info("HTTP error when submitting domain %s to CRITs", domain_data['domain'])
+
+    # Submit sample
+    url = "{srv}/api/v1/samples/".format(srv=cfg.crits)
+    if mime_type in zip_files:
+        file_type = 'zip'
+    elif mime_type in rar_files:
+        file_type = 'rar'
+    else:
+        file_type = 'raw'
+    sample_data = {
+        'api_key': cfg.crits_key,
+        'username': cfg.crits_user,
+        'source': cfg.crits_source,
+        'upload_type': 'file',
+        'md5': md5,
+        'file_format': file_type  # must be type zip, rar, or raw
+    }
+    try:
+        # Note that this request does NOT go through proxies
+        sample_response = requests.post(url, headers=headers, files=files, data=sample_data, verify=False)
+        # pylint says "Instance of LookupDict has no 'ok' member" but it's wrong, I checked
+        if sample_response.status_code == requests.codes.ok:
+            sample_response_data = sample_response.json()
+            if sample_response_data['return_code'] == 0:
+                inserted_sample = True
             else:
-                logging.info("Submission of sample %s failed: %d}", md5, sample_response.status_code)
-        except requests.exceptions.ConnectionError:
-            logging.info("Could not connect to CRITs when submitting sample %s", md5)
-        except requests.exceptions.HTTPError:
-            logging.info("HTTP error when submitting sample %s to CRITs", md5)
-
-        # Create a relationship for the sample and domain
-        url = "{srv}/api/v1/relationships/".format(srv=cfg.crits)
-        if (inserted_sample and inserted_domain):
-            relationship_data = {
-                'api_key': cfg.crits_key,
-                'username': cfg.crits_user,
-                'source': cfg.crits_source,
-                'right_type': domain_response_data['type'],
-                'right_id': domain_response_data['id'],
-                'left_type': sample_response_data['type'],
-                'left_id': sample_response_data['id'],
-                'rel_type': 'Downloaded_From',
-                'rel_confidence': 'high',
-                'rel_date': datetime.datetime.now()
-            }
-            try:
-                # Note that this request does NOT go through proxies
-                relationship_response = requests.post(url, headers=headers, data=relationship_data, verify=False)
-                # pylint says "Instance of LookupDict has no 'ok' member"
-                if relationship_response.status_code != requests.codes.ok:
-                    logging.info("Submitted relationship info for %s to CRITs, response was %r",
-                                 md5, domain_response_data)
-            except requests.exceptions.ConnectionError:
-                logging.info("Could not connect to CRITs when submitting relationship for sample %s", md5)
-            except requests.exceptions.HTTPError:
-                logging.info("HTTP error when submitting relationship for sample %s to CRITs", md5)
-                return True
+                logging.info("Submitted sample %s to CRITs, response was %r", md5, sample_response_data)
         else:
-            return False
+            logging.info("Submission of sample %s failed: %d}", md5, sample_response.status_code)
+    except requests.exceptions.ConnectionError:
+        logging.info("Could not connect to CRITs when submitting sample %s", md5)
+    except requests.exceptions.HTTPError:
+        logging.info("HTTP error when submitting sample %s to CRITs", md5)
+
+    # Create a relationship for the sample and domain
+    url = "{srv}/api/v1/relationships/".format(srv=cfg.crits)
+    if not inserted_sample or not inserted_domain:
+        return False
+    relationship_data = {
+        'api_key': cfg.crits_key,
+        'username': cfg.crits_user,
+        'source': cfg.crits_source,
+        'right_type': domain_response_data['type'],
+        'right_id': domain_response_data['id'],
+        'left_type': sample_response_data['type'],
+        'left_id': sample_response_data['id'],
+        'rel_type': 'Downloaded_From',
+        'rel_confidence': 'high',
+        'rel_date': datetime.datetime.now()
+    }
+    try:
+        # Note that this request does NOT go through proxies
+        relationship_response = requests.post(url, headers=headers, data=relationship_data, verify=False)
+        # pylint says "Instance of LookupDict has no 'ok' member"
+        if relationship_response.status_code != requests.codes.ok:
+            logging.info("Submitted relationship info for %s to CRITs, response was %r",
+                         md5, domain_response_data)
+    except requests.exceptions.ConnectionError:
+        logging.info("Could not connect to CRITs when submitting relationship for sample %s", md5)
+    except requests.exceptions.HTTPError:
+        logging.info("HTTP error when submitting relationship for sample %s to CRITs", md5)
+        return True
 
 
 def upload_vxcage(response, md5, cfg):
     if response:
         url_tag = urlparse(response.url)
         files = {'file': (md5, response.content)}
-        tags = {'tags': url_tag.netloc + ',Maltrieve'}
+        tags = {'tags': f'{url_tag.netloc},Maltrieve'}
         url = "{srv}/malware/add".format(srv=cfg.vxcage)
         headers = {'User-agent': 'Maltrieve'}
         try:
@@ -281,7 +287,7 @@ def upload_viper(response, md5, cfg):
     if response:
         url_tag = urlparse(response.url)
         files = {'file': (md5, response.content)}
-        tags = {'tags': url_tag.netloc + ',Maltrieve'}
+        tags = {'tags': f'{url_tag.netloc},Maltrieve'}
         url = "{srv}/file/add".format(srv=cfg.viper)
         headers = {'User-agent': 'Maltrieve'}
         try:
@@ -304,9 +310,7 @@ def save_malware(response, cfg):
         logging.info('%s in ignore list for %s', mime_type, url)
         return False
     if cfg.white_list:
-        if mime_type in cfg.white_list:
-            pass
-        else:
+        if mime_type not in cfg.white_list:
             logging.info('%s not in whitelist for %s', mime_type, url)
             return False
 
@@ -356,7 +360,7 @@ def process_xml_list_desc(response):
             url = desc.split(' ')[4].rstrip(',')
         url = re.sub('&amp;', '&', url)
         if not re.match('http', url):
-            url = 'http://' + url
+            url = f'http://{url}'
         urls.add(url)
 
     return urls
@@ -364,13 +368,15 @@ def process_xml_list_desc(response):
 
 def process_xml_list_title(response):
     feed = feedparser.parse(response)
-    urls = set([re.sub('&amp;', '&', entry.title) for entry in feed.entries])
-    return urls
+    return {re.sub('&amp;', '&', entry.title) for entry in feed.entries}
 
 
 def process_simple_list(response):
-    urls = set([re.sub('&amp;', '&', line.strip()) for line in response.split('\n') if line.startswith('http')])
-    return urls
+    return {
+        re.sub('&amp;', '&', line.strip())
+        for line in response.split('\n')
+        if line.startswith('http')
+    }
 
 
 def process_urlquery(response):
